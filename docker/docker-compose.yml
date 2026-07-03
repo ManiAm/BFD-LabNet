@@ -1,0 +1,65 @@
+services:
+
+  H1:
+    image: frr-bfd
+    container_name: H1
+    hostname: frr-h1
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    networks:
+      br1:
+        ipv4_address: 10.10.10.2
+
+  H3:
+    image: frr-bfd
+    container_name: H3
+    hostname: frr-h3
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    networks:
+      br2:
+        ipv4_address: 20.20.20.3
+
+  H2:
+    image: frr-bfd
+    container_name: H2
+    hostname: frr-h2
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    networks:
+      br1:
+        ipv4_address: 10.10.10.3
+      br2:
+        ipv4_address: 20.20.20.2
+
+networks:
+  br1:
+    name: br1
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.10.0/24
+  br2:
+    name: br2
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 20.20.20.0/24
