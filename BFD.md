@@ -48,6 +48,56 @@ When deployed, BFD integrates with routing protocols through a straightforward w
 
 4. **Notification**: BFD signals the routing protocol immediately. The protocol tears down the adjacency without waiting for its own slow dead timer (40–180 seconds) and recalculates an alternate path.
 
+### BFD in Action — A Simple Example
+
+Consider two routers, R1 and R2, connected back-to-back by two independent routed links. OSPF is running on both routers and forms a separate adjacency on each link, so it registers both neighbor addresses with BFD. BFD creates one independent session per link — two sessions in total, each with its own timers.
+
+On link 1, R1 and R2 exchange BFD control packets every 100 ms. Both sides report State=Up, confirming the path is healthy:
+
+```mermaid
+%%{init: {'sequence': {'mirrorActors': false}}}%%
+sequenceDiagram
+    participant R1
+    participant R2
+    note over R1, R2: BFD Session 1 — link 1 (10.0.1.0/30) — 100 ms × 3 = 300 ms detect
+    R1->>R2: BFD Control [UDP 3784] State=Up
+    R2->>R1: BFD Control [UDP 3784] State=Up
+    R1-->>R2: ... every ~100 ms ...
+```
+
+Link 2 has its own completely independent BFD session with its own packet exchange. A failure on link 1 would have no effect on this session:
+
+```mermaid
+%%{init: {'sequence': {'mirrorActors': false}}}%%
+sequenceDiagram
+    participant R1
+    participant R2
+    note over R1, R2: BFD Session 2 — link 2 (10.0.2.0/30) — 100 ms × 3 = 300 ms detect
+    R1->>R2: BFD Control [UDP 3784] State=Up
+    R2->>R1: BFD Control [UDP 3784] State=Up
+    R1-->>R2: ... every ~100 ms ...
+```
+
+Now suppose link 2 silently fails — the fiber is damaged but the interface remains electrically up. Since the failure is bidirectional, neither side's BFD packets reach the other. R1 does not know whether its own packets arrived — but it notices that it has stopped receiving BFD packets from R2. After the detection time expires (100 ms × 3 = 300 ms with no incoming packet), R1 declares Session 2 Down and immediately notifies OSPF. R2 independently reaches the same conclusion:
+
+```mermaid
+%%{init: {'sequence': {'mirrorActors': false}}}%%
+sequenceDiagram
+    participant R1
+    participant R2
+    note over R1, R2: Link 2 — Silent Fiber Failure (bidirectional)
+    R1-xR2: BFD Control (lost)
+    R2-xR1: BFD Control (lost)
+    R1-xR2: BFD Control (lost)
+    R2-xR1: BFD Control (lost)
+    R1-xR2: BFD Control (lost)
+    R2-xR1: BFD Control (lost)
+    note over R1: No BFD received for 300 ms<br/>Session 2 → Down<br/>Notify OSPF → withdraw link 2 routes
+    note over R2: No BFD received for 300 ms<br/>Session 2 → Down<br/>Notify OSPF → withdraw link 2 routes
+```
+
+OSPF withdraws only link 2's routes. Link 1 continues forwarding traffic normally — its BFD session is completely unaffected. Without BFD, OSPF would not detect this silent failure for 40 seconds (its default dead timer). With BFD, OSPF reroutes traffic in 300 milliseconds.
+
 ### Origin and Standardization
 
 BFD was designed by Dave Katz and Dave Ward (both at Juniper Networks at the time). They presented the initial concept at the IETF around 2004. The protocol matured through several years of drafts before being published as a set of core RFCs in 2010:
