@@ -387,9 +387,18 @@ Benefits:
 
 ### Multihop BFD (RFC 5883)
 
-**Problem**: Standard single-hop BFD uses GTSM (TTL=255) to verify that packets originate from a directly connected peer. However, some sessions — such as multi-hop eBGP peerings between loopback interfaces separated by intermediate routers — cannot use TTL=255 because intermediate hops decrement the TTL below the acceptance threshold.
+**Background**: Standard single-hop BFD (UDP port 3784) only works between directly connected routers. Consider three routers connected in series:
 
-**Solution**: Multihop BFD uses UDP destination port 4784 and disables the TTL=255 check, allowing packets to be routed across multiple hops. Because GTSM protection is unavailable in this mode, Multihop BFD relies on cryptographic authentication (Keyed SHA-1 or stronger) within the BFD packet to prevent injection of spoofed session-teardown messages.
+```
+        link 1          link 2
+  R1 ──────────── R2 ──────────── R3
+```
+
+Single-hop BFD creates two sessions here — one between R1 and R2 on link 1, and one between R2 and R3 on link 2. R1 **cannot** form a single-hop BFD session with R3 because they are not directly connected. The [GTSM security mechanism](#ttl-security-gtsm) enforces this: single-hop BFD sets TTL=255 on every packet, and the receiver rejects anything below 255. A packet from R1 to R3 must pass through R2, which decrements the TTL to 254 — R3 rejects it.
+
+**Problem**: Some routing protocol sessions span multiple hops by design. The most common example is multi-hop eBGP, where two routers peer using their loopback addresses rather than directly connected interface addresses. In the topology above, R1 and R3 might run an eBGP session between their loopbacks (e.g., 1.1.1.1 ↔ 3.3.3.3), with R2 forwarding BGP packets between them. This eBGP session needs fast failure detection, but single-hop BFD cannot provide it because TTL=255 makes R3 reject BFD packets that have traversed any intermediate hop.
+
+**Solution**: Multihop BFD uses UDP destination port 4784 and disables the TTL=255 check, allowing BFD packets to be routed across one or more intermediate hops. R1 can now establish a BFD session directly with R3 to monitor the end-to-end forwarding path that their eBGP session depends on. Because GTSM protection is unavailable in this mode, Multihop BFD relies on cryptographic authentication (Keyed SHA-1 or stronger) within the BFD packet to prevent injection of spoofed session-teardown messages from remote attackers.
 
 ### BFD for MPLS LSPs (RFC 5884)
 
