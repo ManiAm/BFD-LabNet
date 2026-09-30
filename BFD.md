@@ -120,15 +120,13 @@ BFD is a Layer 3 protocol whose payload rides inside standard IP packets:
 
     Ethernet Frame → IP Header → UDP Header → BFD Control Packet
 
-BFD uses UDP rather than TCP for three deliberate reasons:
+BFD uses UDP rather than TCP for two deliberate reasons:
 
 - **No Handshakes**: TCP requires a 3-way handshake and connection teardowns. BFD must begin monitoring with zero setup delay.
 
 - **No Retransmissions**: If a TCP packet is lost, the sender pauses and retransmits, causing unpredictable delays. If a UDP BFD packet is lost, the system simply waits for the next one arriving milliseconds later.
 
-- **ECMP Path Coverage**: The sender uses a random ephemeral source port (typically 49152–65535). Intermediate switches use a hash of the packet's 5-tuple (including source and destination ports) to distribute traffic across Equal-Cost Multi-Path (ECMP) links. By varying the source port, BFD probes are hashed across the same set of forwarding paths that production traffic uses, enabling detection of failures on individual ECMP links rather than testing only a single path.
-
-### Destination UDP Ports
+### Destination UDP Port
 
 The destination UDP port identifies the BFD session type to the receiving router:
 
@@ -138,6 +136,41 @@ The destination UDP port identifies the BFD session type to the receiving router
 | 3785 | Echo          | Remote hardware loops the packet back without control-plane processing            | RFC 5880  |
 | 4784 | [Multihop](#multihop-bfd-rfc-5883)      | Peers separated by one or more intermediate routers                               | RFC 5883  |
 | 6784 | [Micro-BFD](#micro-bfd-for-lags-rfc-7130)   | Individual physical links within a Link Aggregation Group (LAG)                   | RFC 7130  |
+
+### Source UDP Port
+
+While the destination port is fixed per session type, the source port is chosen from the **ephemeral range** (49152–65535). RFC 5881 mandates three rules for this port:
+
+1. The source port **MUST** be in the range 49152–65535.
+2. The **same** source port **MUST** be used for all BFD control packets within a single session — it does not change between packets.
+3. The source port **SHOULD** be unique among all BFD sessions on the system (though if more than 16,384 sessions are active, reuse is permitted).
+
+In practice, implementations vary. Cisco IOS XR uses a fixed source port of 49152 for every BFD session on the router. Open-source stacks like Open vSwitch and VPP assign a unique port per session at creation time but keep it constant for the session's lifetime.
+
+#### The ECMP Blind Spot
+
+The fixed-port-per-session design creates a known limitation when multiple physical paths exist between two routers. Two routers can be directly connected at Layer 3 (same IP subnet, one hop) yet have multiple physical paths between them at Layer 2. For example, a pair of data center switches might be connected through a fabric of intermediate L2 switches:
+
+```
+                              ┌──────────────┐
+                        ┌─────│ L2 Switch B  │─────┐
+                        │     └──────────────┘     │
+  ┌────┐   ┌─────────┐  │     ┌──────────────┐     │  ┌─────────┐   ┌────┐
+  │ R1 │───│ L2 SW A │──┼─────│ L2 Switch C  │─────┼──│ L2 SW E │───│ R2 │
+  └────┘   └─────────┘  │     └──────────────┘     │  └─────────┘   └────┘
+                        └─────│ L2 Switch D  │─────┘
+                              └──────────────┘
+```
+
+R1 and R2 see a single link (one subnet, one BFD session). But L2 Switch A has three equal-cost paths to reach L2 Switch E — via Switch B, C, or D. It uses a hash of the packet's 5-tuple (source IP, destination IP, protocol, source port, destination port) to pick which middle switch to forward through.
+
+Because all BFD control packets in this session share the same source IP, destination IP, protocol, destination port, **and** source port, they produce the same hash every time. Every probe follows the exact same physical path — say, through Switch B. If Switch D silently fails, BFD never notices because no probe ever traverses that path. Meanwhile, production traffic whose 5-tuples hash to Switch D is being silently dropped.
+
+This is a **known and acknowledged limitation**. RFC 9764 (2024) explicitly states:
+
+> *"For testing forwarding over multiple hops, there is no such specified general-purpose BFD mechanism for exercising all links in an ECMP. This may result in a BFD session being in the Up state while some traffic may be dropped or otherwise negatively impacted along some component links."*
+
+The RFC further notes that some vendors use proprietary, implementation-specific workarounds to better test ECMP members, but that these cannot be standardized due to the diversity of load-balancing implementations. For LAG bundles specifically, [Micro-BFD (RFC 7130)](#micro-bfd-for-lags-rfc-7130) solves this by running a dedicated session on each physical member link — but no equivalent standard exists for general ECMP paths.
 
 ### The BFD Control Packet
 
